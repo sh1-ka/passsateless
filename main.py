@@ -71,15 +71,12 @@ class AddItemScreen(ModalScreen):
             with Vertical(classes="dialog_content") as dialog:
                 dialog.border_title = " New Record "
                 
-                # Поле Service
                 yield Label("Service / Название", classes="input-label")
                 yield Input(placeholder="например, github", id="input_service")
                 
-                # Поле Login
                 yield Label("Login / Email", classes="input-label")
                 yield Input(placeholder="например, user@mail.com", id="input_login")
                 
-                # Горизонтальный блок для чисел
                 with Horizontal(id="num_inputs"):
                     with Vertical(classes="half_input_col"):
                         yield Label("Version", classes="input-label")
@@ -117,6 +114,7 @@ class AddItemScreen(ModalScreen):
             return
         
         self.dismiss({"service": service, "login": login, "pass_ver": ver, "lnth": length})
+
 
 class ShowPasswordScreen(ModalScreen):
     """Модальное окно показа пароля. Пароль генерируется только по нажатию на глазок."""
@@ -184,6 +182,7 @@ class ShowPasswordScreen(ModalScreen):
     def action_cancel(self):
         self.dismiss()
 
+
 class SisiApp(App):
     """Основной класс приложения в стиле киберпанк/Posting."""
     
@@ -240,7 +239,6 @@ class SisiApp(App):
         border: none;
         padding: 0 1;
     }
-    /* Делаем прозрачными четные и нечетные строки, чтобы убрать черный фон */
     DataTable > .datatable--odd-row,
     DataTable > .datatable--even-row,
     DataTable > .datatable--data-row {
@@ -294,10 +292,10 @@ class SisiApp(App):
     }
 
     #pwd_row {
-    height: 3;
-    align: left middle;
-    margin-bottom: 1;
-    background: transparent;
+        height: 3;
+        align: left middle;
+        margin-bottom: 1;
+        background: transparent;
     }
     #pwd_row Input {
         width: 1fr;
@@ -338,7 +336,6 @@ class SisiApp(App):
         background: transparent; 
     }
     
-    /* Кнопка "Отмена" */
     .btn-primary {
         border: round rgba(80, 70, 120, 0.6);
         color: $text-muted;
@@ -349,7 +346,6 @@ class SisiApp(App):
         color: white;
     }
 
-    /* Кнопка "Сохранить" */
     .btn-success {
         border: round $magenta;
         color: $magenta;
@@ -360,7 +356,6 @@ class SisiApp(App):
         color: #ff85fa;
     }
 
-    /* Кнопка "Удалить" */
     .btn-error {
         border: round #af005f;
         color: #ff3385;
@@ -442,6 +437,18 @@ class SisiApp(App):
                 key=str(i),
             )
 
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Скрывает пароли, если фокус перемещен на другую строку."""
+        table = self.query_one(DataTable)
+        current_row_idx = table.cursor_coordinate.row
+        
+        for row_idx in list(self.revealed_rows):
+            if row_idx != current_row_idx:
+                self.revealed_rows.discard(row_idx)
+                table.update_cell(str(row_idx), "password", "•" * 10)
+                if row_idx in self.pwd_cache:
+                    del self.pwd_cache[row_idx]
+
     def action_add_item(self):
         self.push_screen(AddItemScreen(), self.handle_add)
 
@@ -514,11 +521,8 @@ class SisiApp(App):
 
         row_key = str(row_idx)
         if row_idx in self.revealed_rows:
-            
             self.revealed_rows.discard(row_idx)
             table.update_cell(row_key, "password", "•" * 10)
-            
-            
             if row_idx in self.pwd_cache:
                 del self.pwd_cache[row_idx]
         else:
