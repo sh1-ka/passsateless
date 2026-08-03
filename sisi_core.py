@@ -59,7 +59,7 @@ def _get_hash_from_masterkey(master_key : str, salt : bytes):
             length=32,
             iterations=4,
             lanes=4,
-            memory_cost=65536
+            memory_cost=2**19
             )
     return kdf.derive(master_key.encode("utf-8"))
 
