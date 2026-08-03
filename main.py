@@ -116,8 +116,30 @@ class AddItemScreen(ModalScreen):
         self.dismiss({"service": service, "login": login, "pass_ver": ver, "lnth": length})
 
 
+class SearchScreen(ModalScreen):
+    """Модальное окно для поиска."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            with Vertical(classes="dialog_content") as dialog:
+                dialog.border_title = " Search "
+                yield Label("Поиск (пусто для сброса)", classes="input-label")
+                yield Input(id="input_search", placeholder="Введите название сервиса...")
+
+    def on_mount(self):
+        self.query_one("#input_search").focus()
+
+    def on_input_submitted(self, event: Input.Submitted):
+        if event.input.id == "input_search":
+            self.dismiss(event.value)
+
+    def action_cancel(self):
+        self.dismiss(None)
+
+
 class ShowPasswordScreen(ModalScreen):
-    """Модальное окно показа пароля. Пароль генерируется только по нажатию на глазок."""
+    """Модальное окно показа пароля."""
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, master_key: str, item: dict):
@@ -255,7 +277,7 @@ class SisiApp(App):
         text-style: bold;
     }
 
-    /* 5. МОДАЛЬНЫЕ ОКНА (Эффект матового стекла) */
+    /* 5. МОДАЛЬНЫЕ ОКНА */
     .dialog {
         align: center middle;
         background: rgba(0, 0, 0, 0.4);
@@ -321,7 +343,7 @@ class SisiApp(App):
         background: transparent;
     }
 
-    /* 7. КНОПКИ (Контурные и прозрачные) */
+    /* 7. КНОПКИ */
     .buttons {
         height: auto;
         align: center middle;
@@ -365,6 +387,10 @@ class SisiApp(App):
         background: rgba(215, 0, 95, 0.2);
         color: #ff66a3;
     }
+    
+    * {
+        scrollbar-size: 0 0;
+    }
     """
 
     BINDINGS = [
@@ -372,6 +398,7 @@ class SisiApp(App):
         Binding("d", "delete_item", "Delete"),
         Binding("g", "generate_pass", "Copy"),
         Binding("s", "toggle_show", "Show/Hide"),
+        Binding("/", "search", "Search"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -382,6 +409,8 @@ class SisiApp(App):
         self.db_data = {"content": []}
         self.revealed_rows = set()   
         self.pwd_cache = {}          
+        self.displayed_indices = []
+        self.current_search = ""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main_container"):
@@ -425,8 +454,14 @@ class SisiApp(App):
         table.clear()
         self.revealed_rows = set()
         self.pwd_cache = {}
+        self.displayed_indices = []
         self.db_data = sisi_core._load_data(self.master_key, self.filename)
+        
         for i, item in enumerate(self.db_data["content"]):
+            if self.current_search and self.current_search.lower() not in item["service"].lower():
+                continue
+                
+            self.displayed_indices.append(i)
             table.add_row(
                 str(i),
                 item["service"],
@@ -437,17 +472,46 @@ class SisiApp(App):
                 key=str(i),
             )
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Скрывает пароли, если фокус перемещен на другую строку."""
+        container = self.query_one("#main_container")
+        if self.current_search:
+            container.border_subtitle = f" v1.0.0 | Поиск: {self.current_search} "
+        else:
+            container.border_subtitle = " v1.0.0 "
+
+    def _get_selected_item(self):
         table = self.query_one(DataTable)
-        current_row_idx = table.cursor_coordinate.row
-        
+        try:
+            table_row = table.cursor_coordinate.row
+            row_idx = self.displayed_indices[table_row]
+            return row_idx, self.db_data["content"][row_idx]
+        except (IndexError, TypeError):
+            return None, None
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        table = self.query_one(DataTable)
+        try:
+            table_row = table.cursor_coordinate.row
+            current_row_idx = self.displayed_indices[table_row]
+        except IndexError:
+            current_row_idx = None
+            
         for row_idx in list(self.revealed_rows):
             if row_idx != current_row_idx:
                 self.revealed_rows.discard(row_idx)
-                table.update_cell(str(row_idx), "password", "•" * 10)
                 if row_idx in self.pwd_cache:
                     del self.pwd_cache[row_idx]
+                try:
+                    table.update_cell(str(row_idx), "password", "•" * 10)
+                except Exception:
+                    pass
+
+    def action_search(self):
+        self.push_screen(SearchScreen(), self.handle_search)
+
+    def handle_search(self, search_query: str):
+        if search_query is not None:
+            self.current_search = search_query.strip()
+            self.refresh_table()
 
     def action_add_item(self):
         self.push_screen(AddItemScreen(), self.handle_add)
@@ -466,22 +530,18 @@ class SisiApp(App):
             self.notify(f"Запись {data['service']} добавлена", severity="information")
 
     def action_show_pass(self):
-        table = self.query_one(DataTable)
-        try:
-            row_idx = table.cursor_coordinate.row
-            item = self.db_data["content"][row_idx]
-            self.push_screen(ShowPasswordScreen(self.master_key, item))
-        except Exception:
+        row_idx, item = self._get_selected_item()
+        if item is None:
             self.notify("Выберите запись", severity="error")
+            return
+        self.push_screen(ShowPasswordScreen(self.master_key, item))
 
     def action_delete_item(self):
-        table = self.query_one(DataTable)
-        try:
-            row_idx = table.cursor_coordinate.row
-            item = self.db_data["content"][row_idx]
-            self.push_screen(ConfirmDeleteScreen(item["service"], row_idx), self.handle_delete)
-        except Exception:
+        row_idx, item = self._get_selected_item()
+        if item is None:
             self.notify("Сначала выберите запись", severity="error")
+            return
+        self.push_screen(ConfirmDeleteScreen(item["service"], row_idx), self.handle_delete)
 
     def handle_delete(self, item_id):
         if item_id is not None:
@@ -490,36 +550,33 @@ class SisiApp(App):
             self.notify("Запись удалена", severity="warning")
 
     def action_generate_pass(self):
-        table = self.query_one(DataTable)
-        try:
-            row_idx = table.cursor_coordinate.row
-            item = self.db_data["content"][row_idx]
-            pwd = self.pwd_cache.get(row_idx)
-            
-            if pwd is None:
-                pwd = sisi_core.generate_password(
-                    self.master_key, item["login"], item["service"],
-                    item["pass_ver"], item["lnth"],
-                )
-
-            if HAS_CLIPBOARD:
-                pyperclip.copy(pwd)
-                self.notify(f"Пароль для {item['service']} скопирован в буфер!", timeout=3)
-            else:
-                self.notify(f"Пароль: {pwd}", timeout=10)
-        except Exception:
+        row_idx, item = self._get_selected_item()
+        if item is None:
             self.notify("Выберите запись для генерации", severity="error")
+            return
+            
+        pwd = self.pwd_cache.get(row_idx)
+        if pwd is None:
+            pwd = sisi_core.generate_password(
+                self.master_key, item["login"], item["service"],
+                item["pass_ver"], item["lnth"],
+            )
+
+        if HAS_CLIPBOARD:
+            pyperclip.copy(pwd)
+            self.notify(f"Пароль для {item['service']} скопирован в буфер!", timeout=3)
+        else:
+            self.notify(f"Пароль: {pwd}", timeout=10)
 
     def action_toggle_show(self):
-        table = self.query_one(DataTable)
-        try:
-            row_idx = table.cursor_coordinate.row
-            item = self.db_data["content"][row_idx]
-        except Exception:
+        row_idx, item = self._get_selected_item()
+        if item is None:
             self.notify("Выберите запись", severity="error")
             return
 
+        table = self.query_one(DataTable)
         row_key = str(row_idx)
+        
         if row_idx in self.revealed_rows:
             self.revealed_rows.discard(row_idx)
             table.update_cell(row_key, "password", "•" * 10)
